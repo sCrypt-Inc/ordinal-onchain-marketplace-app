@@ -4,29 +4,123 @@ import {
     SmartContract,
     hash256,
     assert,
-    SigHash
+    ByteString,
+    FixedArray,
+    toByteString,
+    fill,
+    PubKeyHash,
+    Utils,
+    Addr,
+    Sig,
+    slice,
+    PubKey,
+    hash160
 } from 'scrypt-ts'
 
-import type {ByteString} from 'scrypt-ts';
+export type Item = {
+    outpoint: ByteString
+    price: bigint
+    sellerAddr: Addr
+    isEmptySlot: boolean
+    requestingBuyer: Addr
+}
 
-export class OrdinalMarketplaceApp extends SmartContract {
+
+export class OrdinalMarketplace extends SmartContract {
+
+    static readonly ITEM_SLOTS = 10
+
     @prop(true)
-    count: bigint
+    items: FixedArray<Item, typeof OrdinalMarketplace.ITEM_SLOTS>
 
-    constructor(count: bigint) {
-        super(count)
-        this.count = count
+    constructor() {
+        super(...arguments)
+        this.items = fill(
+            {
+                outpoint: toByteString(''),
+                price: 0n,
+                sellerAddr: PubKeyHash(toByteString('0000000000000000000000000000000000000000')),
+                isEmptySlot: true,
+                requestingBuyer: PubKeyHash(toByteString('0000000000000000000000000000000000000000'))
+            },
+            OrdinalMarketplace.ITEM_SLOTS
+        )
     }
 
-    @method(SigHash.SINGLE)
-    public increment() {
-        this.count++
+    @method()
+    public listItem(item: Item, itemIdx: bigint) {
+        assert(this.items[Number(itemIdx)].isEmptySlot, 'item slot not empty')
+        assert(!item.isEmptySlot, 'new item cannot have the "isEmptySlot" flag set to true')
+        assert(item.price > 0n, 'item price must be at least one satoshi')
 
-        // make sure balance in the contract does not change
-        const amount: bigint = this.ctx.utxo.value
-        // output containing the latest state
-        const output: ByteString = this.buildStateOutput(amount)
-        // verify current tx has this single output
-        assert(this.ctx.hashOutputs === hash256(output), 'hashOutputs mismatch')
+        this.items[Number(itemIdx)] = item
+
+        let outputs = this.buildStateOutput(this.ctx.utxo.value)
+        outputs += this.buildChangeOutput()
+        assert(hash256(outputs) == this.ctx.hashOutputs, 'hashOutputs mismatch')
     }
+    
+    
+    @method()
+    public requestBuy(itemIdx: bigint, buyerAddr: Addr) {
+        assert(!this.items[Number(itemIdx)].isEmptySlot, 'item slot empty')
+
+        const item = this.items[Number(itemIdx)]
+        
+        this.items[Number(itemIdx)].requestingBuyer = buyerAddr
+        
+        // Make sure buyer made deposit to smart contract.
+        let outputs = this.buildStateOutput(this.ctx.utxo.value + item.price)
+        outputs += this.buildChangeOutput()
+        assert(hash256(outputs) == this.ctx.hashOutputs, 'hashOutputs mismatch')
+    }
+
+    @method()
+    public confirmBuy(itemIdx: bigint) {
+        assert(!this.items[Number(itemIdx)].isEmptySlot, 'item slot empty')
+
+        const item = this.items[Number(itemIdx)]
+        
+        this.items[Number(itemIdx)].requestingBuyer = PubKeyHash(toByteString('0000000000000000000000000000000000000000'))
+        
+        // Make sure first input unlocks ordinal.
+        assert(
+            slice(this.prevouts, 0n, 36n) == item.outpoint,
+            'first input is not spending specified ordinal UTXO'
+        )
+        
+        // First output will transfer the ordinal to the buyer.
+        let outputs = Utils.buildPublicKeyHashOutput(item.requestingBuyer, 1n)
+        
+        // Second output will be the marketplace contract itself.
+        outputs = this.buildStateOutput(this.ctx.utxo.value - item.price)
+        
+        // Third output pays the seller
+        outputs += Utils.buildPublicKeyHashOutput(item.sellerAddr, item.price)
+        
+        // Handle change and check outputs.
+        outputs += this.buildChangeOutput()
+        assert(hash256(outputs) == this.ctx.hashOutputs, 'hashOutputs mismatch')
+    }
+
+    @method()
+    public cancelBuy(itemIdx: bigint, buyerPubKey: PubKey, buyerSig: Sig) {
+        assert(!this.items[Number(itemIdx)].isEmptySlot, 'item slot empty')
+        
+
+        const item = this.items[Number(itemIdx)]
+        
+        this.items[Number(itemIdx)].requestingBuyer = PubKeyHash(toByteString('0000000000000000000000000000000000000000'))
+        
+        // Check buyer pubkey and sig.
+        assert(hash160(buyerPubKey) == item.requestingBuyer, 'buyer invalid pubkey')
+        assert(this.checkSig(buyerSig, buyerPubKey), 'buyer sig invalid')
+        
+        // Subtract buyers deposit from contract and refund his address.
+        let outputs = this.buildStateOutput(this.ctx.utxo.value - item.price)
+        outputs += Utils.buildPublicKeyHashOutput(item.requestingBuyer, item.price)
+        outputs += this.buildChangeOutput()
+        assert(hash256(outputs) == this.ctx.hashOutputs, 'hashOutputs mismatch')
+    }
+
 }
