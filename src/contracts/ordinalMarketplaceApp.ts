@@ -22,6 +22,7 @@ export type Item = {
     price: bigint
     sellerAddr: Addr
     isEmptySlot: boolean
+    hasRequestingBuyer: boolean
     requestingBuyer: Addr
 }
 
@@ -39,9 +40,10 @@ export class OrdinalMarketplace extends SmartContract {
             {
                 outpoint: toByteString(''),
                 price: 0n,
-                sellerAddr: PubKeyHash(toByteString('0000000000000000000000000000000000000000')),
+                sellerAddr: Addr(toByteString('0000000000000000000000000000000000000000')),
                 isEmptySlot: true,
-                requestingBuyer: PubKeyHash(toByteString('0000000000000000000000000000000000000000'))
+                hasRequestingBuyer: false,
+                requestingBuyer: Addr(toByteString('0000000000000000000000000000000000000000')),
             },
             OrdinalMarketplace.ITEM_SLOTS
         )
@@ -52,6 +54,7 @@ export class OrdinalMarketplace extends SmartContract {
         assert(this.items[Number(itemIdx)].isEmptySlot, 'item slot not empty')
         assert(!item.isEmptySlot, 'new item cannot have the "isEmptySlot" flag set to true')
         assert(item.price > 0n, 'item price must be at least one satoshi')
+        assert(!item.hasRequestingBuyer, 'new item cannot have requesting buyer flag set to true')
 
         this.items[Number(itemIdx)] = item
 
@@ -67,6 +70,7 @@ export class OrdinalMarketplace extends SmartContract {
 
         const item = this.items[Number(itemIdx)]
         
+        this.items[Number(itemIdx)].hasRequestingBuyer = true
         this.items[Number(itemIdx)].requestingBuyer = buyerAddr
         
         // Make sure buyer made deposit to smart contract.
@@ -81,6 +85,7 @@ export class OrdinalMarketplace extends SmartContract {
 
         const item = this.items[Number(itemIdx)]
         
+        this.items[Number(itemIdx)].hasRequestingBuyer = false
         this.items[Number(itemIdx)].requestingBuyer = PubKeyHash(toByteString('0000000000000000000000000000000000000000'))
         
         // Make sure first input unlocks ordinal.
@@ -110,6 +115,7 @@ export class OrdinalMarketplace extends SmartContract {
 
         const item = this.items[Number(itemIdx)]
         
+        this.items[Number(itemIdx)].hasRequestingBuyer = false
         this.items[Number(itemIdx)].requestingBuyer = PubKeyHash(toByteString('0000000000000000000000000000000000000000'))
         
         // Check buyer pubkey and sig.
@@ -122,5 +128,6 @@ export class OrdinalMarketplace extends SmartContract {
         outputs += this.buildChangeOutput()
         assert(hash256(outputs) == this.ctx.hashOutputs, 'hashOutputs mismatch')
     }
+    
 
 }

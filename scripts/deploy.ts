@@ -1,7 +1,8 @@
 import { writeFileSync } from 'fs'
-import { OrdinalMarketplaceApp } from '../src/contracts/ordinalMarketplaceApp'
+import { OrdinalMarketplace } from '../src/contracts/ordinalMarketplaceApp'
 import { privateKey } from './privateKey'
-import { bsv, TestWallet, DefaultProvider, sha256 } from 'scrypt-ts'
+import { bsv, TestWallet, DefaultProvider, sha256, Addr } from 'scrypt-ts'
+import { OrdiNFTP2PKH, OrdinalNFT } from 'scrypt-ord'
 
 function getScriptHash(scriptPubKeyHex: string) {
     const res = sha256(scriptPubKeyHex).match(/.{2}/g)
@@ -12,7 +13,7 @@ function getScriptHash(scriptPubKeyHex: string) {
 }
 
 async function main() {
-    await OrdinalMarketplaceApp.compile()
+    await OrdinalMarketplace.loadArtifact()
 
     // Prepare signer. 
     // See https://scrypt.io/docs/how-to-deploy-and-call-a-contract/#prepare-a-signer-and-provider
@@ -20,13 +21,10 @@ async function main() {
         network: bsv.Networks.testnet
     }))
 
-    // TODO: Adjust the amount of satoshis locked in the smart contract:
-    const amount = 100
+    // Adjust the amount of satoshis locked in the smart contract:
+    const amount = 1
 
-    const instance = new OrdinalMarketplaceApp(
-        // TODO: Pass constructor parameter values.
-        0n
-    )
+    const instance = new OrdinalMarketplace()
 
     // Connect to a signer.
     await instance.connect(signer)
@@ -42,6 +40,14 @@ async function main() {
     console.log('OrdinalMarketplaceApp contract was successfully deployed!')
     console.log(`TXID: ${deployTx.id}`)
     console.log(`scriptHash: ${scriptHash}`)
+    
+    for (let i = 0; i < 3; i++) {
+        const ord = new OrdiNFTP2PKH(Addr(privateKey.toAddress().toByteString()))
+        await ord.connect(signer)
+        
+        const ordTx = await ord.inscribeText(`Hello, sCrypt! ${i}`)
+        console.log(`Deployed NFT: ${ordTx.id}`)
+    }
 }
 
 main()
