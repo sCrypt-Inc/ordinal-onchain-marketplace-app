@@ -1,14 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ItemList from './ItemList';
 import NewItem from './NewItem';
-import { ScryptProvider, SensiletSigner, Scrypt, ContractCalledEvent, toByteString, MethodCallOptions, hash160, reverseByteString, int2ByteString, Addr, bsv, Utils, pubKey2Addr, slice, byteString2Int, UTXO } from 'scrypt-ts';
+import { ScryptProvider, SensiletSigner, Scrypt, ContractCalledEvent, toByteString, MethodCallOptions, hash160, reverseByteString, int2ByteString, Addr, bsv, Utils, pubKey2Addr, slice, byteString2Int, UTXO, PubKey, findSig, SignatureResponse, StatefulNext } from 'scrypt-ts';
 import { Item, OrdinalMarketplace } from './contracts/ordinalMarketplaceApp';
-import { signTx } from 'scryptlib'
 
 // `npm run deploycontract` to get deployment transaction id
 const contract_id = {
   /** The deployment transaction id */
-  txId: "87a7c2646bf8fff24d65adba587f48b97b9d14af85a7c37a1c0f8c67c381840c",
+  txId: "b5fa4d938a537c115f87cec51ae6789df50082b47c1f216d1ec7a1048166ff92",
   /** The output index */
   outputIndex: 0,
 };
@@ -25,7 +24,7 @@ const App: React.FC = () => {
 
     signerRef.current = signer;
 
-    fetchMyAddr(signer)
+    fetchWalletInfo(signer)
     fetchContract()
 
     const subscription = Scrypt.contractApi.subscribe(
@@ -44,8 +43,9 @@ const App: React.FC = () => {
   }, []);
 
 
-  async function fetchMyAddr(signer: SensiletSigner) {
-    setMyAddr(hash160((await signer.getDefaultPubKey()).toString()))
+  async function fetchWalletInfo(signer: SensiletSigner) {
+    const publicKey = await signer.getDefaultPubKey()
+    setMyAddr(hash160(publicKey.toByteString()))
   }
 
   async function fetchContract() {
@@ -254,14 +254,6 @@ const App: React.FC = () => {
             unsignedTx.change(options.changeAddress)
           }
 
-          if (options.sequence !== undefined) {
-            unsignedTx.inputs[1].sequenceNumber = options.sequence
-          }
-
-          if (options.lockTime !== undefined) {
-            unsignedTx.nLockTime = options.lockTime
-          }
-
           return Promise.resolve({
             tx: unsignedTx,
             atInputIndex: 1,
@@ -279,18 +271,107 @@ const App: React.FC = () => {
       )
 
       // If we would like to broadcast, here we need to sign ordinal UTXO input.
-      
+
 
       // TODO
 
     }
   };
 
+
+  const handleCancel = async (idx: number) => {
+    const signer = signerRef.current as SensiletSigner;
+
+    if (contractInstance && signer) {
+      const { isAuthenticated, error } = await signer.requestAuth();
+      if (!isAuthenticated) {
+        throw new Error(error);
+      }
+
+      await contractInstance.connect(signer);
+
+      const itemPrice = Number(contractInstance.items[idx].price)
+
+      // Create the next instance from the current.
+      const nextInstance = contractInstance.next()
+      nextInstance.items[idx].hasRequestingBuyer = false
+      nextInstance.items[idx].requestingBuyer = Addr(toByteString('0000000000000000000000000000000000000000'))
+
+
+      // Bind custom call tx builder.
+      contractInstance.bindTxBuilder(
+        'cancelBuy',
+        async (
+          current: OrdinalMarketplace,
+          options: MethodCallOptions<OrdinalMarketplace>
+        ) => {
+          const unsignedTx: bsv.Transaction = new bsv.Transaction()
+          
+          const next = options.next as StatefulNext<OrdinalMarketplace>
+
+          unsignedTx
+            .addInput(current.buildContractInput())
+            .addOutput(
+              new bsv.Transaction.Output({
+                script: next.instance.lockingScript,
+                satoshis: current.utxo.satoshis - itemPrice,
+              })
+            )
+            // Build buyer refund output.
+            .addOutput(
+              new bsv.Transaction.Output({
+                script: bsv.Script.fromHex(
+                  Utils.buildPublicKeyHashScript(
+                    current.items[idx].requestingBuyer
+                  )
+                ),
+                satoshis: itemPrice,
+              })
+            )
+
+          if (options.changeAddress) {
+            unsignedTx.change(options.changeAddress)
+          }
+          
+          return Promise.resolve({
+            tx: unsignedTx,
+            atInputIndex: 0,
+            nexts: [],
+          })
+        }
+      )
+
+      // Call the method of current instance to apply the updates on chain.
+      const myPublicKey = await signer.getDefaultPubKey()
+      contractInstance.methods
+        .cancelBuy(
+          BigInt(idx),
+          PubKey(myPublicKey.toByteString()),
+          (sigResps: SignatureResponse[]) => findSig(sigResps, myPublicKey),
+          {
+            pubKeyOrAddrToSign: myPublicKey,
+            changeAddress: myPublicKey.toAddress(),
+            next: {
+              instance: nextInstance,
+              balance: contractInstance.balance - itemPrice,
+            },
+          } as MethodCallOptions<OrdinalMarketplace>
+        )
+        .then((result) => {
+          console.log(`Buy request call tx: ${result.tx.id}`);
+        })
+        .catch((e) => {
+          console.error("Buy request call error: ", e);
+        });
+    }
+  }
+
   return (
     myAddr ? (
       <div>
         <NewItem onAdd={handleAdd} />
-        <ItemList items={contractInstance ? contractInstance.items as Item[] : []} myAddr={myAddr} onBuy={handleBuyRequest} onConfirm={handleOnConfirm} />
+        <ItemList items={contractInstance ? contractInstance.items as Item[] : []} myAddr={myAddr}
+          onBuy={handleBuyRequest} onConfirm={handleOnConfirm} onCancel={handleCancel} />
       </div>
     ) : null
   );

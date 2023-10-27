@@ -112,20 +112,20 @@ export class OrdinalMarketplace extends SmartContract {
     public cancelBuy(itemIdx: bigint, buyerPubKey: PubKey, buyerSig: Sig) {
         assert(!this.items[Number(itemIdx)].isEmptySlot, 'item slot empty')
         
-
         const item = this.items[Number(itemIdx)]
-        
-        this.items[Number(itemIdx)].hasRequestingBuyer = false
-        this.items[Number(itemIdx)].requestingBuyer = PubKeyHash(toByteString('0000000000000000000000000000000000000000'))
-        
+
         // Check buyer pubkey and sig.
         assert(hash160(buyerPubKey) == item.requestingBuyer, 'buyer invalid pubkey')
         assert(this.checkSig(buyerSig, buyerPubKey), 'buyer sig invalid')
         
+        this.items[Number(itemIdx)].hasRequestingBuyer = false
+        this.items[Number(itemIdx)].requestingBuyer = Addr(toByteString('0000000000000000000000000000000000000000'))
+        
         // Subtract buyers deposit from contract and refund his address.
         let outputs = this.buildStateOutput(this.ctx.utxo.value - item.price)
-        outputs += Utils.buildPublicKeyHashOutput(item.requestingBuyer, item.price)
+        outputs += Utils.buildPublicKeyHashOutput(hash160(buyerPubKey), item.price)
         outputs += this.buildChangeOutput()
+        
         assert(hash256(outputs) == this.ctx.hashOutputs, 'hashOutputs mismatch')
     }
     

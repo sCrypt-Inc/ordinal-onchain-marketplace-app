@@ -9,15 +9,24 @@ interface ItemProps {
   myAddr: Addr
   onBuy: (idx: number) => void;
   onConfirm: (idx: number) => void;
+  onCancel: (idx: number) => void;
 }
 
-const ItemView: React.FC<ItemProps> = ({ item, idx, myAddr, onBuy, onConfirm }) => {
+const ItemView: React.FC<ItemProps> = ({ item, idx, myAddr, onBuy, onConfirm, onCancel }) => {
   let button: any = undefined
 
-  if (item.hasRequestingBuyer && item.sellerAddr == myAddr) {
-    button = <Button variant="contained" onClick={() => onConfirm(idx)}>Confirm</Button>
+  if (item.hasRequestingBuyer) {
+    if (item.sellerAddr == myAddr) {
+      button = <Button variant="contained" onClick={() => onConfirm(idx)}>Confirm Request</Button>
+    } else if (item.requestingBuyer == myAddr) {
+      button = <Button variant="contained" onClick={() => onCancel(idx)}>Cancel Request</Button>
+    }
   } else {
-    button = <Button variant="contained" onClick={() => onBuy(idx)}>Buy</Button>
+    if (item.sellerAddr == myAddr) {
+      // TODO: Implement delete item listing
+    } else {
+      button = <Button variant="contained" onClick={() => onBuy(idx)}>Request Buy</Button>
+    }
   }
 
   return <Card sx={{ minWidth: 275, m: 2}}>
